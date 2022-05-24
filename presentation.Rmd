@@ -1,0 +1,355 @@
+---
+title: "Spatial Data and Mapping in R"
+author: "Jon Minton"
+date: '2022-05-23'
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+---
+
+
+## Aim
+
+-   Theory
+    -   Geometric perspective
+    -   Data structure perspective
+-   Packages
+    -   `sf`
+    -   base plotting functions
+    -   tmap
+        -   static
+        -   interactive
+    -   ggplot2
+-   Examples
+    -   Basic choropleth
+    -   Basemap + points
+    -   Interactive lookup?
+
+## Theory - geometries
+
+-   High level distinction between types of spatial data 
+    - **raster** files: rectangular bitmaps of values
+        - look different on different resolution displays
+    - **vector** files: mathematical descriptions of relationships between collections of attributes/features
+        - key example of vector graphics: fonts 
+        - raster graphics may be used as a base map; then vector-based features added on top
+-   Geometric perspective
+    -   points, lines, polylines, polygons, collections
+    -   attributes to above entities
+-   Attributes can include names, identifiers etc, which allow linking to other features in databases
+    -   e.g. datazones, intermediate geographies, healthboards etc.
+-   also need to consider projections
+
+## theory - data structures
+
+-   Data structure perspective
+    -   basic data types in R include integers, real numbers, complex numbers, characters etc
+    -   and include **lists**
+    -   lists can take unnamed and named elements of different types and lengths
+        -   this includes other lists, allowing deeply nested, 'ragged' collections of elements within a list
+-   dataframes
+    -   data frames are non-ragged lists, where elements within each list object are of the same type
+        -   *this includes columns that can contain only other lists* (a **list column**)
+    -   also have an additional `data.frame` attribute attached to their class
+    -   tibbles have further attributes added (`tbl_df`), in addition to `data.frame`
+        -   try `class(x)`
+    -   this changes how some other functions work with the objects, by evoking class-specific methods.
+        -   try `methods("print")` or `methods("plot")` for examples
+-   tidyverse
+    -   encourages working with tibbles (rectangular data) and using verb-functions to interact with them
+    -   but spatial entities are not inherently rectangular
+        -   a rougher geometry may require more coordinates to define it than a smoother geography
+        -   an administrative geography including part of the mainland and an island will require more collections of polygons than one that only includes the mainland
+    -   The older `sp` (**sp**atial) package was developed before the tidyverse, and did not work easily with tidyverse paradigms/verbs etc based around rectangular data.
+
+## The `sf` package
+
+-   `sf`: 'simple features'
+-   [Introduction](https://r-spatial.github.io/sf/articles/sf1.html)
+    -   simple geography types include:
+        -   `POINT`, `LINESTRING`, `POLYGON`
+        -   `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`
+        -   `GEOMETRYCOLLECTION` (somewhat like a list?)
+        -   ten additional (rarer) geography types
+    -   how are these stored?
+        -   an `sf` class `data.frame` contains
+        -   an `sfc` class list-column "with the geometries for each feature (record), which is composed of"
+        -   `sfg`: "the feature geography of an indivdual simple feature"
+
+## Example with `sf`
+
+Let's try the example code in the above intro
+
+```{r}
+pacman::p_load(tidyverse, sf)
+
+nc <- st_read(system.file("shape/nc.shp", package="sf"))
+
+```
+
+
+```{r}
+class(nc)
+nc
+```
+Note the geometry column
+
+## example with `sf` - continued
+
+```{r}
+print(nc[9:15], n = 3)
+```
+
+![](https://r-spatial.github.io/sf/articles/sf_xfig.png)
+
+
+## example with `sf` - continued
+
+Pull out the geometry column
+
+```{r}
+(nc_geom <- st_geometry(nc))
+```
+
+
+```{r}
+nc_geom[[1]]
+```
+
+
+plotting 
+
+
+```{r}
+plot(nc_geom[[1]])
+plot(nc_geom[[2]])
+plot(nc_geom)
+
+```
+ 
+## example with `sf` - continued
+
+```{r}
+plot(nc)
+
+# We can use tidyverse functions with the nc object (as it's a data.frame)
+nc %>% 
+  arrange(desc(AREA))
+
+```
+
+## Plotting with `ggplot`
+
+- See [the fifth sf article](https://r-spatial.github.io/sf/articles/sf5.html) 
+- There is a special geom, `geom_sf` for handling sf objects
+
+
+```{r}
+ggplot(data = nc) +
+  geom_sf()
+```
+
+We can use the fill attribute. For example, let's make the fill dependent on the ratio of perimeter to area, so wigglier/more connected places are hotter colours r
+
+```{r}
+nc %>% 
+  mutate(
+    wiggliness = PERIMETER / AREA
+  ) %>% 
+  ggplot() +
+  geom_sf(aes(fill = wiggliness), color = NA)
+```
+
+## Plotting with `tmap`
+
+`tmap` is quite similar to ggplot2 in operation, but just focused on maps, and having defaults that work well with spatial data 
+
+```{r}
+pacman::p_load(tmap)
+
+qtm(nc) # qtm : 'quick tmap', analogous to ggplot2::qplot() 
+```
+
+And to fill polygons based on a value
+
+```{r}
+
+tm_shape(nc) + tm_fill("AREA") # note area in quotes, also use of tm_shape first
+
+nc %>% 
+  mutate(
+    wiggliness = PERIMETER / AREA
+  ) %>% 
+  tm_shape() + 
+  tm_fill("wiggliness")
+  
+```
+
+Plotting with interactive `tmap`
+
+- `tmap` has an option to create interactive version of the above (static) maps, using the `leaflet` package. 
+
+```{r}
+tmap_mode("view")
+
+nc %>% 
+  mutate(
+    wiggliness = PERIMETER / AREA
+  ) %>% 
+  tm_shape() + 
+  tm_fill("wiggliness")
+
+```
+
+Note the addition of a standard base map layer. 
+
+
+to switch back between modes 
+
+```{r}
+ttm() # toggles between interactive and static
+tmap_mode("plot") # switches to static (even if already on static mode)
+
+```
+
+
+## tmap basemaps 
+
+When in view mode (using `leaflet`), different basemaps can be selected by specifying a valid selection from `leaflet::providers`). Here's the default example:
+
+```{r}
+current.mode <- tmap_mode("view")
+
+data(World, metro)
+
+tm_basemap(leaflet::providers$Stamen.Watercolor) +
+# tm_basemap(leaflet::providers$CartoDB) +
+  tm_shape(metro, bbox = "India") + tm_dots(col = "red", group = "Metropolitan areas") +
+  tm_tiles(paste0("http://services.arcgisonline.com/arcgis/rest/services/Canvas/",
+      "World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"), group = "Labels")
+
+
+```
+
+Both the basemap and tiles are rasters (bitmap image files). The difference is that tiles go on top and the basemap is at the bottom. (maps being composed of successive layers, much like ggplots)
+
+## Application to Scottish data 
+
+- [spatialdata.gov.scot](https://spatialdata.gov.scot/geonetwork/srv/eng/catalog.search;jsessionid=A8B7AE4171E651F6496FBA4081318BE2#/home)
+- How about [defibrillators in Perth & Kinross?](https://spatialdata.gov.scot/geonetwork/srv/eng/catalog.search;jsessionid=A8B7AE4171E651F6496FBA4081318BE2#/metadata/36501eb0-714b-406a-8552-9579275315b3)
+- I've downloaded to the base folder and unzipped to the `defibrillators` folder
+- We can use `st_read` on the `shp` (shape) file
+
+```{r}
+defib_points <- st_read("Defibrillators/Defibrillators.shp")
+
+
+```
+
+
+## Scottish example continued 
+
+Maybe we can use `leaflet` with the view mode to see where these are 
+
+```{r}
+current.mode <- tmap_mode("view")
+
+tm_basemap(leaflet::providers$Stamen.Watercolor) +
+# tm_basemap(leaflet::providers$CartoDB) +
+  tm_shape(defib_points) + tm_dots()
+```
+
+## Scottish example continued 
+
+- The map maybe isn't detailed enough (though looks pretty)
+- We can look at other leaflet basemaps [here](https://leaflet-extras.github.io/leaflet-providers/preview/) 
+- I'm going to try  `OpenStreetMap.Mapnik`
+
+```{r}
+current.mode <- tmap_mode("view")
+
+tm_basemap(leaflet::providers$OpenStreetMap.Mapnik) +
+# tm_basemap(leaflet::providers$CartoDB) +
+  tm_shape(defib_points) + tm_dots()
+```
+
+## With SIMD 
+
+We can also attempt to combine layers of different types
+
+- Defibrillators are points
+- SIMD are polygons 
+
+There are neater ways of doing this, but I've downloaded the SIMD 2020 shapefiles [here](https://spatialdata.gov.scot/geonetwork/srv/eng/catalog.search#/metadata/02866b0b-66e5-46ab-9b1c-d433dc3c2fae)
+
+```{r}
+
+simd_shapes <- st_read("big_data/SG_SIMD_2020/SG_SIMD_2020.shp")
+
+simd_shapes
+```
+
+Maybe we just want to find the right LA
+
+```{r}
+unique(simd_shapes$LAName)
+
+simd_pc <- simd_shapes %>% 
+  filter(LAName == "Perth and Kinross")
+
+simd_pc
+
+# The bounding box of the filtered and unfiltered selection 
+st_bbox(simd_pc)
+st_bbox(simd_shapes)
+
+# So, the bounding box is narrowed when the selection is narrowed
+```
+
+```{r}
+tmap_mode("plot")
+
+qtm(simd_pc)
+
+tm_shape(simd_pc) + 
+  tm_polygons(col = "HlthSMR")
+```
+
+## Combining 
+
+Let's now try to combine both datasets 
+
+```{r}
+tmap_mode("plot")
+tm_shape(simd_pc) + 
+  tm_polygons(col = "HlthSMR") + 
+  tm_shape(defib_points) + 
+  tm_dots(col = "red")
+
+```
+
+Or interactive...
+
+```{r}
+tmap_mode("view")
+
+tm_basemap(leaflet::providers$OpenStreetMap.Mapnik) + 
+  tm_shape(simd_pc) + 
+    tm_polygons(col = "HlthSMR", alpha = 0.3) + # set transparency 
+    tm_shape(defib_points) + 
+    tm_dots(col = "red")
+
+```
+
+## Conclusion/Discussion
+
+- Thanks to `sf`, spatial data **much** easier and more compatible with tidyverse than it used to be. 
+- Easy to hook into leaflet through tmap view mode to get interactive charts
+- Relatively quick straightfoward to combine layers to explore potential associations etc. 
+
+Not covered
+
+- Spatial statistics and operations (e.g. finding perimeters around points etc)
+- Cartograms (very cool!) 
+- More efficient ways of querying data online through APIs instead of downloading first 
+- More careful graphical refinements and ways of improving the aesthetics of maps for different purposes. 
