@@ -1,0 +1,198 @@
+---
+title: "Pubs and bars by deprivation"
+author: "Jon Minton"
+date: '2022-05-27'
+output: html_document
+---
+
+
+# Aims
+
+This document aims to see how straightforward (or otherwise) it would be to plot the locations of pubs and bars in Scotland alongside a choropleth indicating SIMD scores for different regions. 
+
+
+# Packages and links
+
+I created the following link by going to the preferred API for openstreetmap, called [overpass](https://overpass-turbo.eu/), and on the Wizard writing "pubs or bars in Scotland". 
+
+I *think* this is a json object. 
+
+```{r}
+pub_bar_link <- "https://overpass-api.de/api/interpreter?data=%2F*%0AThis%20has%20been%20generated%20by%20the%20overpass-turbo%20wizard.%0AThe%20original%20search%20was%3A%0A%E2%80%9Cbar%20or%20pub%20in%20Scotland%E2%80%9D%0A*%2F%0A%5Bout%3Ajson%5D%5Btimeout%3A25%5D%3B%0A%2F%2F%20fetch%20area%20%E2%80%9CScotland%E2%80%9D%20to%20search%20in%0Aarea%28id%3A3600058446%29-%3E.searchArea%3B%0A%2F%2F%20gather%20results%0A%28%0A%20%20%2F%2F%20query%20part%20for%3A%20%E2%80%9Cbar%E2%80%9D%0A%20%20node%5B%22amenity%22%3D%22bar%22%5D%28area.searchArea%29%3B%0A%20%20way%5B%22amenity%22%3D%22bar%22%5D%28area.searchArea%29%3B%0A%20%20relation%5B%22amenity%22%3D%22bar%22%5D%28area.searchArea%29%3B%0A%20%20%2F%2F%20query%20part%20for%3A%20%E2%80%9Cpub%E2%80%9D%0A%20%20node%5B%22amenity%22%3D%22pub%22%5D%28area.searchArea%29%3B%0A%20%20way%5B%22amenity%22%3D%22pub%22%5D%28area.searchArea%29%3B%0A%20%20relation%5B%22amenity%22%3D%22pub%22%5D%28area.searchArea%29%3B%0A%29%3B%0A%2F%2F%20print%20results%0Aout%20body%3B%0A%3E%3B%0Aout%20skel%20qt%3B" 
+```
+
+I'm going to use the packages tidyverse, sf, tmap, and geojsonsf
+
+```{r}
+pacman::p_load(
+  tidyverse, tmap, sf, #geojsonsf
+  osmdata             
+               )
+```
+
+
+# Getting the data from json to sf 
+
+The (new) challenge will be seeing if I can convert the contents of the above link into an sf object, containing points and metadata for each of the bars and pubs 
+
+```{r eval = FALSE}
+barpub_point <- geojson_sf(pub_bar_link)
+
+# fails: no type member at object index - - invalid GeoJSON
+
+barpub_point <- geojson_sf(pub_bar_link, expand_geometries = TRUE)
+
+# fails: no type member at object index - - invalid GeoJSON
+
+
+# I'm instead going to see if a single object that appears to be of the right type loads as a point 
+
+test_node <- 
+  '
+{
+  "type": "node",
+  "id": 25346762,
+  "lat": 55.9349346,
+  "lon": -3.1790559,
+  "tags": {
+    "addr:city": "Edinburgh",
+    "addr:housenumber": "233-235",
+    "addr:street": "Causewayside",
+    "amenity": "pub",
+    "name": "Old Bell Inn",
+    "phone": "+44 131 668 1573",
+    "real_ale": "yes",
+    "source": "survey",
+    "website": "https://www.oldbelledinburgh.co.uk/",
+    "wheelchair": "limited"
+  }
+}
+'
+
+a_point <- geojson_sf(test_node)
+
+
+```
+
+This failed. The json isn't the kind of geojson that the above package is intending to work with.
+
+Instead it appears there's a dedicated package, [osmdata](https://cran.r-project.org/web/packages/osmdata/vignettes/osmdata.html), which could/should be used instead. 
+
+```{r}
+# I'm going to start by seeing if the examples in the tutorial above work, then try adapting them to getting pubs and bars in Scotland 
+
+x <- opq(bbox = "greater london uk") %>% 
+  add_osm_feature(key = "highway", value = "motorway") %>% 
+  osmdata_sf()
+
+x
+
+x$osm_points
+plot(x$osm_points)
+
+qtm(x$osm_points)
+```
+
+That seems to work okay, so long as I remember the sf objects are inside the main list object
+
+Let's try to adapt the above to the query I already had 
+
+```{r}
+q1 <- opq('Scotland') %>% 
+  add_osm_feature(key = 'amenity', value = 'pub')
+pubs <- osmdata_sf(q1)
+
+q2 <- opq('Scotland') %>% 
+  add_osm_feature(key = "amenity", value = "bar")
+bars <- osmdata_sf(q2)
+
+pubs_or_bars <- c(pubs, bars)
+
+```
+Let's now try to plot this 
+
+```{r}
+#  tm_shape(pubs_or_bars$osm_points) + tm_dots() +# The points themselves
+#  tm_shape(pubs_or_bars$osm_polygons) +tm_polygons()
+
+# It looks like perhaps some pubs have been defined as polygons instead of points 
+
+tm_shape(pubs_or_bars$osm_points) + tm_dots()
+```
+This includes all points in the bbox that contains Scotland, so bits of Northern England and Ireland/Northern Ireland as well. However hopefully we should be able to clip the points data .
+
+Let's load in the SIMD data I downloaded earlier 
+
+
+```{r}
+simd <- read_sf("big_data/SG_SIMD_2020/SG_SIMD_2020.shp")
+
+simd
+
+```
+
+It looks from [here](https://mattherman.info/blog/point-in-poly/) that getting points in polygons is a single line 
+
+```{r}
+#pubbars_in_scotland <- st_join(pubs_or_bars$osm_points, simd, join = st_within)
+
+# doesn't work as the CRS are different
+
+#st_crs(pubs_or_bars$osm_points)
+#st_crs(simd)
+
+# Will the following work? 
+
+st_transform(pubs_or_bars$osm_points, st_crs(simd))
+
+st_crs(pubs_or_bars$osm_points)
+
+st_crs(pubbars_in_scotland)
+st_crs(simd)
+dim(pubbars_in_scotland)
+dim(pubs_or_bars$osm_points)
+
+#hmm, this doesn't seem to have reduced the number of rows...
+
+
+```
+
+```{r}
+tm_shape(pubbars_in_scotland) + tm_dots()
+# Nope, still includes England and Ireland(s)
+
+# Let's try st_intersection 
+
+pubbars_in_scotland2 <- st_intersection(pubs_or_bars$osm_points, simd)
+
+tm_shape(pubbars_in_scotland2) + tm_dots()
+# Nope! 
+
+#check simd again
+
+tm_shape(simd) + tm_polygons() 
+# Takes a while but works 
+
+tm_shape(simd) + tm_polygons() + 
+  tm_shape(pubbars_in_scotland) + tm_dots()
+
+# Idon't see any points
+
+tm_shape(simd) + tm_polygons() + 
+  tm_shape(pubbars_in_scotland) + tm_dots()
+
+
+```
+Could it be the points are presnt but just too small?! To see this let's try the interactivce mode 
+
+
+```{r}
+
+tmap_mode("view")
+
+tm_shape(simd) + tm_polygons() + 
+  tm_shape(pubbars_in_scotland) + tm_dots()
+
+
+```
+
